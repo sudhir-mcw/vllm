@@ -331,6 +331,16 @@ class MRotaryEmbedding(RotaryEmbeddingBase):
         assert positions.ndim == 1 or positions.ndim == 2
         assert key is not None
 
+        # The triton_mrope kernel below only implements NeoX-style rotation
+        # (pairs (i, i+rotary_dim/2)). Models that use GPT-J-style rotation
+        # (pairs (2i, 2i+1)) — e.g. GLM-4.1V / GLM-OCR — set is_neox_style=False
+        # and would silently get the wrong rotation here, corrupting decoder
+        # outputs on every layer. Fall back to the native implementation for
+        # those models; it routes through ApplyRotaryEmb which honors
+        # is_neox_style. See https://github.com/vllm-project/vllm/issues/42016.
+        if positions.ndim == 2 and not self.is_neox_style:
+            return self.forward_native(positions, query, key, offsets)
+
         cos_sin_cache = self._match_cos_sin_cache_dtype(query)
         num_tokens = positions.shape[-1]
         cos_sin = cos_sin_cache[positions]
